@@ -29,7 +29,7 @@ directionalLight.castShadow = true;
 scene.add(directionalLight);
 
 const loader = new FBXLoader();
-const url = '3d/mapa3.fbx'; // Ruta al archivo FBX
+const url = '3d/mapa6.fbx'; // Ruta al archivo FBX
 
 loader.load(url, function (object) {
     scene.add(object);
