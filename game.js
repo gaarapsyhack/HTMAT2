@@ -1,6 +1,7 @@
 // game.js
 import * as THREE from 'https://cdn.skypack.dev/three@0.134.0';
 import { PointerLockControls } from 'https://cdn.skypack.dev/three@0.134.0/examples/jsm/controls/PointerLockControls.js';
+import { FBXLoader } from 'https://cdn.skypack.dev/three@0.134.0/examples/jsm/loaders/FBXLoader.js';
 
 // Ajustar el tamaño de la ventana al cambiar su tamaño
 window.addEventListener('resize', onWindowResize, false);
@@ -26,6 +27,17 @@ const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
 directionalLight.position.set(50, 100, 50);
 directionalLight.castShadow = true;
 scene.add(directionalLight);
+
+const loader = new FBXLoader();
+const url = '3d/mapa_1.fbx'; // Ruta al archivo FBX
+
+loader.load(url, function (object) {
+    scene.add(object);
+    object.position.set(0, 0, 0); // Ajusta la posición del modelo si es necesario
+    object.scale.set(0.1, 0.1, 0.1); // Ajusta la escala del modelo si es necesario
+}, undefined, function (error) {
+    console.error('An error happened:', error);
+});
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
