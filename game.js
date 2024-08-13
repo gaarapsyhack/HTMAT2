@@ -1,83 +1,84 @@
-// game.js
 import * as THREE from 'https://cdn.skypack.dev/three@0.134.0';
 import { PointerLockControls } from 'https://cdn.skypack.dev/three@0.134.0/examples/jsm/controls/PointerLockControls.js';
 import { FBXLoader } from 'https://cdn.skypack.dev/three@0.134.0/examples/jsm/loaders/FBXLoader.js';
+import * as CANNON from 'https://cdn.skypack.dev/cannon-es@0.20.0';
 
-// Ajustar el tamaño de la ventana al cambiar su tamaño
-window.addEventListener('resize', onWindowResize, false);
+let mapMeshes = [];
+const playerHeight = 1.8;
+const playerRadius = 0.5;
 
-function onWindowResize() {
-    camera.aspect = window.innerWidth / window.innerHeight;
-    camera.updateProjectionMatrix();
-    renderer.setSize(window.innerWidth, window.innerHeight);
-}
+// Configurar el mundo de Cannon.js
+const world = new CANNON.World();
+world.gravity.set(0, -9.8, 0);  // Gravedad hacia abajo
+
+// Crear el cuerpo del jugador en Cannon.js
+const playerShape = new CANNON.Sphere(playerRadius);
+const playerBody = new CANNON.Body({
+    mass: 75,  // Masa del jugador
+    position: new CANNON.Vec3(0, 15, 0),  // Posición inicial
+    shape: playerShape,
+    material: new CANNON.Material({
+        friction: 0.0,
+        restitution: 0.0
+    })
+});
+world.addBody(playerBody);
 
 // Escena, cámara y renderizador
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x87ceeb); // Color de fondo azul cielo
+scene.background = new THREE.Color(0x87ceeb);
 
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.shadowMap.enabled = true;
+document.body.appendChild(renderer.domElement);
 
-// Añadir una luz ambiental suave
+// Añadir luces
 const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
 scene.add(ambientLight);
-
-// Añadir una luz direccional para sombras
 const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
 directionalLight.position.set(50, 100, 50);
 directionalLight.castShadow = true;
 scene.add(directionalLight);
 
+// Cargar el modelo FBX
 const loader = new FBXLoader();
-const url = '3d/mapa6.fbx'; // Ruta al archivo FBX
+const url = '3d/mapa6.fbx';
 
-loader.load(url, function (object) {
+loader.load(url, (object) => {
+    object.position.set(-15, -40, -20);
+    object.scale.set(0.5, 0.5, 0.5);
+    object.updateMatrixWorld(true);
+
+    object.traverse(function (child) {
+        if (child instanceof THREE.Mesh) {
+            child.geometry.computeBoundingBox();
+            const boundingBox = child.geometry.boundingBox.clone();
+            boundingBox.applyMatrix4(child.matrixWorld);
+            mapMeshes.push(child);
+
+            // Crear un cuerpo de Cannon.js para cada malla
+            const boxSize = boundingBox.getSize(new THREE.Vector3());
+            const boxShape = new CANNON.Box(new CANNON.Vec3(boxSize.x / 2, boxSize.y / 2, boxSize.z / 2));
+            const boxBody = new CANNON.Body({
+                mass: 0,  // Objeto estático
+                position: new CANNON.Vec3(boundingBox.min.x + boxSize.x / 2, boundingBox.min.y + boxSize.y / 2, boundingBox.min.z + boxSize.z / 2),
+                shape: boxShape
+            });
+            world.addBody(boxBody);
+        }
+    });
+
     scene.add(object);
-    object.position.set(0, 0, 1); // Ajusta la posición del modelo si es necesario
-    object.scale.set(1, 1, 1); // Ajusta la escala del modelo si es necesario
 }, undefined, function (error) {
     console.error('An error happened:', error);
 });
-
-const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.shadowMap.enabled = true; // Habilitar sombras
-document.body.appendChild(renderer.domElement);
-
-// Crear un plano (suelo) con una textura
-const textureLoader = new THREE.TextureLoader();
-const floorTexture = textureLoader.load('https://threejsfundamentals.org/threejs/resources/images/checker.png');
-floorTexture.wrapS = floorTexture.wrapT = THREE.RepeatWrapping;
-floorTexture.repeat.set(20, 20);
-
-const floorGeometry = new THREE.PlaneGeometry(200, 200);
-const floorMaterial = new THREE.MeshStandardMaterial({ map: floorTexture, side: THREE.DoubleSide });
-const floor = new THREE.Mesh(floorGeometry, floorMaterial);
-floor.rotation.x = - Math.PI / 2;
-floor.receiveShadow = true; // Recibir sombras
-scene.add(floor);
-
-// Añadir algunos cubos para interactuar con el entorno
-const boxGeometry = new THREE.BoxGeometry(4, 4, 4);
-const boxMaterial = new THREE.MeshStandardMaterial({ color: 0x808080 });
-
-for (let i = 0; i < 20; i++) {
-    const box = new THREE.Mesh(boxGeometry, boxMaterial);
-    box.position.set(
-        (Math.random() - 0.5) * 100,
-        2,
-        (Math.random() - 0.5) * 100
-    );
-    box.castShadow = true; // Proyectar sombras
-    box.receiveShadow = true;
-    scene.add(box);
-}
 
 // Controles de primera persona
 const controls = new PointerLockControls(camera, document.body);
 scene.add(controls.getObject());
 
-// Instrucciones para el usuario
 const instructions = document.createElement('div');
 instructions.style.position = 'absolute';
 instructions.style.top = '50%';
@@ -103,12 +104,8 @@ controls.addEventListener('unlock', function () {
 });
 
 // Movimiento básico
-const moveSpeed = 400.0; // unidades por segundo
+const moveSpeed = 20.0;
 const clock = new THREE.Clock();
-
-const velocity = new THREE.Vector3();
-const direction = new THREE.Vector3();
-
 const keysPressed = {
     forward: false,
     backward: false,
@@ -116,80 +113,91 @@ const keysPressed = {
     right: false
 };
 
-// Teclas de movimiento
-const onKeyDown = function (event) {
+document.addEventListener('keydown', (event) => {
     switch (event.code) {
         case 'ArrowUp':
         case 'KeyW':
             keysPressed.forward = true;
             break;
-        case 'ArrowLeft':
-        case 'KeyA':
+        case 'ArrowRight':
+        case 'KeyD':
             keysPressed.left = true;
             break;
         case 'ArrowDown':
         case 'KeyS':
             keysPressed.backward = true;
             break;
-        case 'ArrowRight':
-        case 'KeyD':
+        case 'ArrowLeft':
+        case 'KeyA':
             keysPressed.right = true;
             break;
     }
-};
+});
 
-const onKeyUp = function (event) {
+document.addEventListener('keyup', (event) => {
     switch (event.code) {
         case 'ArrowUp':
         case 'KeyW':
             keysPressed.forward = false;
             break;
-        case 'ArrowLeft':
-        case 'KeyA':
+        case 'ArrowRight':
+        case 'KeyD':
             keysPressed.left = false;
             break;
         case 'ArrowDown':
         case 'KeyS':
             keysPressed.backward = false;
             break;
-        case 'ArrowRight':
-        case 'KeyD':
+        case 'ArrowLeft':
+        case 'KeyA':
             keysPressed.right = false;
             break;
     }
-};
-
-document.addEventListener('keydown', onKeyDown);
-document.addEventListener('keyup', onKeyUp);
-
-// Posicionar la cámara inicial un poco por encima del suelo
-camera.position.y = 8;
+});
 
 function animate() {
     requestAnimationFrame(animate);
-
     const delta = clock.getDelta();
 
     if (controls.isLocked === true) {
-        // Reducir velocidad gradualmente (simulación de fricción)
-        velocity.x -= velocity.x * 10.0 * delta;
-        velocity.z -= velocity.z * 10.0 * delta;
+        const direction = new THREE.Vector3();
+        const velocity = new THREE.Vector3();
 
+        // Obtener la dirección en la que la cámara está mirando
+        const forward = new THREE.Vector3();
+        camera.getWorldDirection(forward);
+        forward.y = 0; // Ignorar el componente Y para que el jugador no se mueva hacia arriba o abajo
+        forward.normalize();
+
+        const right = new THREE.Vector3();
+        right.crossVectors(camera.up, forward).normalize(); // Vector a la derecha de la cámara
+
+        // Calcular la dirección del movimiento basado en las teclas presionadas
         direction.z = Number(keysPressed.forward) - Number(keysPressed.backward);
         direction.x = Number(keysPressed.right) - Number(keysPressed.left);
-        direction.normalize(); // Asegurarse de que la dirección no sea demasiado rápida
 
-        if (keysPressed.forward || keysPressed.backward) velocity.z -= direction.z * moveSpeed * delta;
-        if (keysPressed.left || keysPressed.right) velocity.x -= direction.x * moveSpeed * delta;
+        // Combinar la dirección del movimiento con la dirección en la que mira la cámara
+        velocity.add(forward.clone().multiplyScalar(direction.z));
+        velocity.add(right.clone().multiplyScalar(direction.x));
+        velocity.normalize().multiplyScalar(moveSpeed); // Ajustar velocidad
 
-        controls.moveRight(- velocity.x * delta);
-        controls.moveForward(- velocity.z * delta);
+        // Aplicar velocidad al cuerpo del jugador en Cannon.js
+        playerBody.velocity.x = velocity.x;
+        playerBody.velocity.z = velocity.z;
 
-        // Evitar que el usuario caiga
-        controls.getObject().position.y = 10; // Altura fija sobre el suelo
+        // Actualizar el mundo de Cannon.js
+        world.step(1 / 60, delta, 3);
+
+        // Sincronizar la posición del jugador de Three.js con la de Cannon.js
+        controls.getObject().position.copy(playerBody.position);
+
+        // Mantener la cámara a una altura constante sobre el jugador
+        const cameraHeight = playerBody.position.y + playerHeight / 2;
+        camera.position.y = cameraHeight;
     }
 
     renderer.render(scene, camera);
 }
+
 
 animate();
