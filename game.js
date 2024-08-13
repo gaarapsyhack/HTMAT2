@@ -2,10 +2,12 @@ import * as THREE from 'https://cdn.skypack.dev/three@0.134.0';
 import { PointerLockControls } from 'https://cdn.skypack.dev/three@0.134.0/examples/jsm/controls/PointerLockControls.js';
 import { FBXLoader } from 'https://cdn.skypack.dev/three@0.134.0/examples/jsm/loaders/FBXLoader.js';
 import * as CANNON from 'https://cdn.skypack.dev/cannon-es@0.20.0';
+import { ConvexGeometry } from 'https://cdn.skypack.dev/three@0.134.0/examples/jsm/geometries/ConvexGeometry.js';
 
 let mapMeshes = [];
 const playerHeight = 1.8;
 const playerRadius = 0.5;
+let convexHull = new THREE.Mesh();
 
 // Configurar el mundo de Cannon.js
 const world = new CANNON.World();
@@ -14,8 +16,8 @@ world.gravity.set(0, -9.8, 0);  // Gravedad hacia abajo
 // Crear el cuerpo del jugador en Cannon.js
 const playerShape = new CANNON.Sphere(playerRadius);
 const playerBody = new CANNON.Body({
-    mass: 75,  // Masa del jugador
-    position: new CANNON.Vec3(0, 15, 0),  // Posición inicial
+    mass: 1,  // Masa del jugador
+    position: new CANNON.Vec3(0, 40, 0),  // Posición inicial
     shape: playerShape,
     material: new CANNON.Material({
         friction: 0.0,
@@ -24,10 +26,38 @@ const playerBody = new CANNON.Body({
 });
 world.addBody(playerBody);
 
+
+
 // Escena, cámara y renderizador
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x87ceeb);
 
+// Crear la malla visual en Three.js para el jugador
+const playerGeometry = new THREE.SphereGeometry(playerRadius, 32, 32); // Puedes ajustar el número de segmentos para mejorar la apariencia
+const playerMaterial = new THREE.MeshBasicMaterial({ color: 0xff0000 }); // Color rojo para el jugador
+const playerMesh = new THREE.Mesh(playerGeometry, playerMaterial);
+scene.add(playerMesh);
+
+const planeGeometry = new THREE.PlaneGeometry(25, 25)
+const texture = new THREE.TextureLoader().load('img/grid.png')
+const plane = new THREE.Mesh(
+    planeGeometry,
+    new THREE.MeshPhongMaterial({ map: texture })
+)
+plane.rotateX(-Math.PI / 2)
+plane.position.y = -1
+plane.receiveShadow = true
+scene.add(plane)
+
+const planeShape = new CANNON.Plane()
+const planeBody = new CANNON.Body({ mass: 0 })
+planeBody.addShape(planeShape)
+planeBody.quaternion.setFromAxisAngle(
+    new CANNON.Vec3(1, 0, 0),
+    -Math.PI / 2
+)
+planeBody.position.y = plane.position.y
+world.addBody(planeBody)
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
@@ -45,36 +75,60 @@ scene.add(directionalLight);
 // Cargar el modelo FBX
 const loader = new FBXLoader();
 const url = '3d/mapa6.fbx';
+// Función para convertir geometría de Three.js a Trimesh de Cannon.js
+function CreateTrimesh(geometry) {
+    let vertices;
+    if (geometry.index === null) {
+        vertices = geometry.attributes.position.array;
+    } else {
+        const nonIndexedGeometry = geometry.clone().toNonIndexed();
+        vertices = nonIndexedGeometry.attributes.position.array;
+    }
+
+    const indices = Array.from({ length: vertices.length / 3 }, (_, i) => i);
+
+    return new CANNON.Trimesh(vertices, indices);
+}
+
 
 loader.load(url, (object) => {
-    object.position.set(-15, -40, -20);
+    object.position.set(-15, -20, -20);
     object.scale.set(0.5, 0.5, 0.5);
+    scene.add(object);
+    console.log("object pos:", object.position);
     object.updateMatrixWorld(true);
 
     object.traverse(function (child) {
+        child.updateMatrixWorld(true);
+        //console.log("childpos:", child.position);
         if (child instanceof THREE.Mesh) {
-            child.geometry.computeBoundingBox();
-            const boundingBox = child.geometry.boundingBox.clone();
-            boundingBox.applyMatrix4(child.matrixWorld);
-            mapMeshes.push(child);
+            //scene.add(child);
+            setTimeout(() => {
+            const position = child.geometry.attributes.position.array;
+            const points = [];
+            for (let i = 0; i < position.length; i += 3) {
+                points.push(new THREE.Vector3(position[i], position[i + 1], position[i + 2]));
+            }
+            const convexGeometry = new ConvexGeometry(points);
+            convexHull = new THREE.Mesh(convexGeometry, new THREE.MeshBasicMaterial({ color: 0xff0000, wireframe: true }));
+            child.add(convexHull);
+        }, 2000);
 
-            // Crear un cuerpo de Cannon.js para cada malla
-            const boxSize = boundingBox.getSize(new THREE.Vector3());
-            const boxShape = new CANNON.Box(new CANNON.Vec3(boxSize.x / 2, boxSize.y / 2, boxSize.z / 2));
-            const boxBody = new CANNON.Body({
-                mass: 0,  // Objeto estático
-                position: new CANNON.Vec3(boundingBox.min.x + boxSize.x / 2, boundingBox.min.y + boxSize.y / 2, boundingBox.min.z + boxSize.z / 2),
-                shape: boxShape
-            });
-            world.addBody(boxBody);
-        }
+            setTimeout(() => {
+                const shape = CreateTrimesh(convexHull.geometry);
+                const body = new CANNON.Body({ mass: 0 });
+                body.addShape(shape);
+                body.position.copy(child.position);
+                body.quaternion.copy(child.quaternion);
+                world.addBody(body);
+
+        }, 2000);
+    }
     });
-
-    scene.add(object);
+    //scene.add(object);
 }, undefined, function (error) {
     console.error('An error happened:', error);
 });
-
 // Controles de primera persona
 const controls = new PointerLockControls(camera, document.body);
 scene.add(controls.getObject());
@@ -157,7 +211,7 @@ document.addEventListener('keyup', (event) => {
 
 function animate() {
     requestAnimationFrame(animate);
-    const delta = clock.getDelta();
+    const delta = Math.min(clock.getDelta(), 0.1)
 
     if (controls.isLocked === true) {
         const direction = new THREE.Vector3();
@@ -186,18 +240,16 @@ function animate() {
         playerBody.velocity.z = velocity.z;
 
         // Actualizar el mundo de Cannon.js
-        world.step(1 / 60, delta, 3);
+        world.step(delta);
+
+        playerMesh.position.copy(playerBody.position);
 
         // Sincronizar la posición del jugador de Three.js con la de Cannon.js
         controls.getObject().position.copy(playerBody.position);
-
-        // Mantener la cámara a una altura constante sobre el jugador
-        const cameraHeight = playerBody.position.y + playerHeight / 2;
-        camera.position.y = cameraHeight;
+        camera.position.y = playerBody.position.y + playerHeight / 2;
     }
 
     renderer.render(scene, camera);
 }
-
 
 animate();
