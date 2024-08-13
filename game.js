@@ -29,12 +29,12 @@ directionalLight.castShadow = true;
 scene.add(directionalLight);
 
 const loader = new FBXLoader();
-const url = '3d/mapa_1.fbx'; // Ruta al archivo FBX
+const url = '3d/mapa3.fbx'; // Ruta al archivo FBX
 
 loader.load(url, function (object) {
     scene.add(object);
-    object.position.set(0, 0, 0); // Ajusta la posición del modelo si es necesario
-    object.scale.set(0.1, 0.1, 0.1); // Ajusta la escala del modelo si es necesario
+    object.position.set(0, 0, 1); // Ajusta la posición del modelo si es necesario
+    object.scale.set(1, 1, 1); // Ajusta la escala del modelo si es necesario
 }, undefined, function (error) {
     console.error('An error happened:', error);
 });
