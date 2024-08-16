@@ -5,7 +5,7 @@ import * as CANNON from 'https://cdn.skypack.dev/cannon-es@0.20.0';
 import { ConvexGeometry } from 'https://cdn.skypack.dev/three@0.134.0/examples/jsm/geometries/ConvexGeometry.js';
 
 let mapMeshes = [];
-const playerHeight = 1.8;
+const playerHeight = 4;
 const playerRadius = 0.5;
 let convexHull = new THREE.Mesh();
 
@@ -16,7 +16,7 @@ world.gravity.set(0, -9.8, 0);  // Gravedad hacia abajo
 // Crear el cuerpo del jugador en Cannon.js
 const playerShape = new CANNON.Sphere(playerRadius);
 const playerBody = new CANNON.Body({
-    mass: 1,  // Masa del jugador
+    mass: 75,  // Masa del jugador
     position: new CANNON.Vec3(0, 40, 0),  // Posición inicial
     shape: playerShape,
     material: new CANNON.Material({
@@ -77,52 +77,85 @@ const loader = new FBXLoader();
 const url = '3d/mapa6.fbx';
 // Función para convertir geometría de Three.js a Trimesh de Cannon.js
 function CreateTrimesh(geometry) {
-    let vertices;
+    let vertices
     if (geometry.index === null) {
-        vertices = geometry.attributes.position.array;
+        vertices = geometry.attributes.position.array
     } else {
-        const nonIndexedGeometry = geometry.clone().toNonIndexed();
-        vertices = nonIndexedGeometry.attributes.position.array;
+        vertices = geometry.clone().toNonIndexed().attributes.position.array
     }
-
-    const indices = Array.from({ length: vertices.length / 3 }, (_, i) => i);
-
-    return new CANNON.Trimesh(vertices, indices);
+    const indices = Object.keys(vertices).map(Number)
+    return new CANNON.Trimesh(vertices, indices)
 }
 
 
 loader.load(url, (object) => {
     object.position.set(-15, -20, -20);
     object.scale.set(0.5, 0.5, 0.5);
+
     scene.add(object);
     console.log("object pos:", object.position);
     object.updateMatrixWorld(true);
 
     object.traverse(function (child) {
-        child.updateMatrixWorld(true);
+        
         //console.log("childpos:", child.position);
         if (child instanceof THREE.Mesh) {
-            //scene.add(child);
-            setTimeout(() => {
-            const position = child.geometry.attributes.position.array;
-            const points = [];
-            for (let i = 0; i < position.length; i += 3) {
-                points.push(new THREE.Vector3(position[i], position[i + 1], position[i + 2]));
-            }
-            const convexGeometry = new ConvexGeometry(points);
-            convexHull = new THREE.Mesh(convexGeometry, new THREE.MeshBasicMaterial({ color: 0xff0000, wireframe: true }));
-            child.add(convexHull);
-        }, 2000);
 
-            setTimeout(() => {
-                const shape = CreateTrimesh(convexHull.geometry);
+            child.updateMatrixWorld();
+            child.geometry.attributes.position.needsUpdate = true;
+            const box = new THREE.Box3().setFromObject(child);
+            const size = new THREE.Vector3();
+            box.getSize(size);
+            const c = new THREE.Vector3();
+            child.getWorldPosition(c);
+            const nodeQuaterion = new THREE.Quaternion();
+            child.getWorldQuaternion(nodeQuaterion);
+
+              // Calculate relative scale based on the parent's scale
+              const relativeScale = new THREE.Vector3();
+              relativeScale.copy(object.scale);  // Parent scale
+              relativeScale.multiply(child.scale); // Relative to child scale
+  
+            console.log("child scale:", child.scale);
+            //scene.add(child);
+                const position = child.geometry.attributes.position.array;
+                const points = [];
+                for (let i = 0; i < position.length; i += 3) {
+                    // Apply the relative scale
+                    points.push(new THREE.Vector3(
+                        position[i] * relativeScale.x,
+                        position[i + 1] * relativeScale.y,
+                        position[i + 2] * relativeScale.z
+                    ));
+                }
+                const convexGeometry = new ConvexGeometry(points);
+                //convexHull = new THREE.Mesh(convexGeometry, new THREE.MeshBasicMaterial({ color: 0xffff00, wireframe: true }));
+                //child.add(convexHull);
+
+                const shape = CreateTrimesh(convexGeometry);
                 const body = new CANNON.Body({ mass: 0 });
                 body.addShape(shape);
-                body.position.copy(child.position);
-                body.quaternion.copy(child.quaternion);
+
+                body.position.copy(c);
+                body.quaternion.copy(nodeQuaterion);
+                // Aplicar la escala correcta en este contexto
+            
                 world.addBody(body);
 
-        }, 2000);
+                    // Visualizar el Trimesh
+    const trimeshGeometry = new THREE.BufferGeometry();
+    const vertices = [];
+    for (let i = 0; i < shape.vertices.length; i += 3) {
+        vertices.push(shape.vertices[i], shape.vertices[i + 1], shape.vertices[i + 2]);
+    }
+    trimeshGeometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+
+    const trimeshMaterial = new THREE.MeshBasicMaterial({ color: 0x00ff00, wireframe : true });
+    const trimeshMesh = new THREE.Mesh(trimeshGeometry, trimeshMaterial);
+
+    trimeshMesh.position.copy(body.position);
+    trimeshMesh.quaternion.copy(body.quaternion);
+    scene.add(trimeshMesh);
     }
     });
     //scene.add(object);
@@ -246,7 +279,7 @@ function animate() {
 
         // Sincronizar la posición del jugador de Three.js con la de Cannon.js
         controls.getObject().position.copy(playerBody.position);
-        camera.position.y = playerBody.position.y + playerHeight / 2;
+        camera.position.y = playerBody.position.y + playerHeight;
     }
 
     renderer.render(scene, camera);
