@@ -5,13 +5,13 @@ import * as CANNON from 'https://cdn.skypack.dev/cannon-es@0.20.0';
 import { ConvexGeometry } from 'https://cdn.skypack.dev/three@0.134.0/examples/jsm/geometries/ConvexGeometry.js';
 
 let mapMeshes = [];
-const playerHeight = 4;
-const playerRadius = 0.5;
+const playerHeight = 15;
+const playerRadius = 5;
 let convexHull = new THREE.Mesh();
 
 // Configurar el mundo de Cannon.js
 const world = new CANNON.World();
-world.gravity.set(0, -9.8, 0);  // Gravedad hacia abajo
+world.gravity.set(0, -20, 0);  // Gravedad hacia abajo
 
 // Crear el cuerpo del jugador en Cannon.js
 const playerShape = new CANNON.Sphere(playerRadius);
@@ -20,7 +20,7 @@ const playerBody = new CANNON.Body({
     position: new CANNON.Vec3(0, 40, 0),  // Posición inicial
     shape: playerShape,
     material: new CANNON.Material({
-        friction: 0.0,
+        friction: 1,
         restitution: 0.0
     })
 });
@@ -74,7 +74,7 @@ scene.add(directionalLight);
 
 // Cargar el modelo FBX
 const loader = new FBXLoader();
-const url = '3d/mapa6.fbx';
+const url = '3d/mapa11.fbx';
 // Función para convertir geometría de Three.js a Trimesh de Cannon.js
 function CreateTrimesh(geometry) {
     let vertices
@@ -138,6 +138,8 @@ loader.load(url, (object) => {
 
                 body.position.copy(c);
                 body.quaternion.copy(nodeQuaterion);
+                body.restitution = 0.0;
+                body.friction = 1;
                 // Aplicar la escala correcta en este contexto
             
                 world.addBody(body);
@@ -268,9 +270,40 @@ function animate() {
         velocity.add(right.clone().multiplyScalar(direction.x));
         velocity.normalize().multiplyScalar(moveSpeed); // Ajustar velocidad
 
-        // Aplicar velocidad al cuerpo del jugador en Cannon.js
-        playerBody.velocity.x = velocity.x;
-        playerBody.velocity.z = velocity.z;
+        // Obtener la normal de la superficie bajo el jugador
+        const contactNormal = new CANNON.Vec3();
+        let numContacts = 0;
+
+        // Verificar contactos actuales del cuerpo del jugador
+        world.contacts.forEach((contact) => {
+            if (contact.bi === playerBody || contact.bj === playerBody) {
+                // Obtener la normal dependiendo del cuerpo
+                if (contact.bi === playerBody) {
+                    contact.ni.negate(contactNormal);
+                } else {
+                    contactNormal.copy(contact.ni);
+                }
+
+                // Incrementar el contador de contactos si estamos en contacto con el suelo
+                numContacts++;
+            }
+        });
+
+        if (numContacts > 0) {
+            // Calcula el ángulo entre la normal del suelo y el vector "arriba" (0, 1, 0)
+            const angle = Math.acos(contactNormal.dot(new CANNON.Vec3(0, 1, 0)));
+
+            const maxSlopeAngle = Math.PI / 4; // Por ejemplo, 45 grados
+            if (angle < maxSlopeAngle) {
+                // Solo mover al jugador si la inclinación está por debajo del ángulo máximo permitido
+                playerBody.velocity.x = velocity.x;
+                playerBody.velocity.z = velocity.z;
+            } else {
+                // Si la inclinación es demasiado grande, evitar movimiento
+                playerBody.velocity.x = 0;
+                playerBody.velocity.z = 0;
+            }
+        }
 
         // Actualizar el mundo de Cannon.js
         world.step(delta);
@@ -284,5 +317,6 @@ function animate() {
 
     renderer.render(scene, camera);
 }
+
 
 animate();
