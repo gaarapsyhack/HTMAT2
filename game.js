@@ -17,7 +17,7 @@ world.gravity.set(0, -20, 0);  // Gravedad hacia abajo
 const playerShape = new CANNON.Sphere(playerRadius);
 const playerBody = new CANNON.Body({
     mass: 75,  // Masa del jugador
-    position: new CANNON.Vec3(0, 40, 0),  // Posición inicial
+    position: new CANNON.Vec3(0, 20, 0),  // Posición inicial
     shape: playerShape,
     material: new CANNON.Material({
         friction: 1,
@@ -74,19 +74,26 @@ scene.add(directionalLight);
 
 // Cargar el modelo FBX
 const loader = new FBXLoader();
-const url = '3d/mapa11.fbx';
+let url = '3d/mapa11.fbx';
 // Función para convertir geometría de Three.js a Trimesh de Cannon.js
-function CreateTrimesh(geometry) {
-    let vertices
-    if (geometry.index === null) {
-        vertices = geometry.attributes.position.array
-    } else {
-        vertices = geometry.clone().toNonIndexed().attributes.position.array
-    }
-    const indices = Object.keys(vertices).map(Number)
-    return new CANNON.Trimesh(vertices, indices)
+let physicsObjects = [];  // Array para almacenar la relación entre cuerpos y mallas
+
+function addPhysicsObject(mesh, body) {
+    physicsObjects.push({ mesh, body });
 }
 
+
+function CreateTrimesh(geometry) {
+    let vertices;
+    if (geometry.index === null) {
+        vertices = geometry.attributes.position.array;
+    } else {
+        const nonIndexedGeometry = geometry.clone().toNonIndexed();
+        vertices = nonIndexedGeometry.attributes.position.array;
+    }
+    const indices = Array.from({ length: vertices.length / 3 }, (_, i) => i);
+    return new CANNON.Trimesh(vertices, indices);
+}
 
 loader.load(url, (object) => {
     object.position.set(-15, -20, -20);
@@ -97,10 +104,7 @@ loader.load(url, (object) => {
     object.updateMatrixWorld(true);
 
     object.traverse(function (child) {
-        
-        //console.log("childpos:", child.position);
         if (child instanceof THREE.Mesh) {
-
             child.updateMatrixWorld();
             child.geometry.attributes.position.needsUpdate = true;
             const box = new THREE.Box3().setFromObject(child);
@@ -108,62 +112,102 @@ loader.load(url, (object) => {
             box.getSize(size);
             const c = new THREE.Vector3();
             child.getWorldPosition(c);
-            const nodeQuaterion = new THREE.Quaternion();
-            child.getWorldQuaternion(nodeQuaterion);
+            const nodeQuaternion = new THREE.Quaternion();
+            child.getWorldQuaternion(nodeQuaternion);
 
-              // Calculate relative scale based on the parent's scale
-              const relativeScale = new THREE.Vector3();
-              relativeScale.copy(object.scale);  // Parent scale
-              relativeScale.multiply(child.scale); // Relative to child scale
-  
+            // Calculate relative scale based on the parent's scale
+            const relativeScale = new THREE.Vector3();
+            relativeScale.copy(object.scale);  // Parent scale
+            relativeScale.multiply(child.scale); // Relative to child scale
+
             console.log("child scale:", child.scale);
-            //scene.add(child);
-                const position = child.geometry.attributes.position.array;
-                const points = [];
-                for (let i = 0; i < position.length; i += 3) {
-                    // Apply the relative scale
-                    points.push(new THREE.Vector3(
-                        position[i] * relativeScale.x,
-                        position[i + 1] * relativeScale.y,
-                        position[i + 2] * relativeScale.z
-                    ));
-                }
-                const convexGeometry = new ConvexGeometry(points);
-                //convexHull = new THREE.Mesh(convexGeometry, new THREE.MeshBasicMaterial({ color: 0xffff00, wireframe: true }));
-                //child.add(convexHull);
 
-                const shape = CreateTrimesh(convexGeometry);
-                const body = new CANNON.Body({ mass: 0 });
-                body.addShape(shape);
+            const position = child.geometry.attributes.position.array;
+            const points = [];
+            for (let i = 0; i < position.length; i += 3) {
+                // Apply the relative scale
+                points.push(new THREE.Vector3(
+                    position[i] * relativeScale.x,
+                    position[i + 1] * relativeScale.y,
+                    position[i + 2] * relativeScale.z
+                ));
+            }
 
-                body.position.copy(c);
-                body.quaternion.copy(nodeQuaterion);
-                body.restitution = 0.0;
-                body.friction = 1;
-                // Aplicar la escala correcta en este contexto
+            const convexGeometry = new ConvexGeometry(points);
+            const shape = CreateTrimesh(convexGeometry);
+            const body = new CANNON.Body({ mass: 0 });
+            body.addShape(shape);
+
+            body.position.copy(c);
+            body.quaternion.copy(nodeQuaternion);
+            body.restitution = 0.0;
+            body.friction = 1;
             
-                world.addBody(body);
-
-                    // Visualizar el Trimesh
-    const trimeshGeometry = new THREE.BufferGeometry();
-    const vertices = [];
-    for (let i = 0; i < shape.vertices.length; i += 3) {
-        vertices.push(shape.vertices[i], shape.vertices[i + 1], shape.vertices[i + 2]);
-    }
-    trimeshGeometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
-
-    const trimeshMaterial = new THREE.MeshBasicMaterial({ color: 0x00ff00, wireframe : true });
-    const trimeshMesh = new THREE.Mesh(trimeshGeometry, trimeshMaterial);
-
-    trimeshMesh.position.copy(body.position);
-    trimeshMesh.quaternion.copy(body.quaternion);
-    scene.add(trimeshMesh);
-    }
+            world.addBody(body);
+        }
     });
-    //scene.add(object);
 }, undefined, function (error) {
     console.error('An error happened:', error);
 });
+
+loader.load('piezas/pieza3.fbx', (object) => {
+    object.position.set(0, 10, 0);
+    object.scale.set(0.03, 0.03, 0.03);
+
+    scene.add(object);
+    console.log("object pos:", object.position);
+    object.updateMatrixWorld(true);
+
+    object.traverse(function (child) {
+        if (child instanceof THREE.Mesh) {
+            child.updateMatrixWorld();
+            child.geometry.attributes.position.needsUpdate = true;
+            const box = new THREE.Box3().setFromObject(child);
+            const size = new THREE.Vector3();
+            box.getSize(size);
+            const c = new THREE.Vector3();
+            child.getWorldPosition(c);
+            const nodeQuaternion = new THREE.Quaternion();
+            child.getWorldQuaternion(nodeQuaternion);
+
+            // Calculate relative scale based on the parent's scale
+            const relativeScale = new THREE.Vector3();
+            relativeScale.copy(object.scale);  // Parent scale
+            relativeScale.multiply(child.scale); // Relative to child scale
+
+            console.log("child scale:", child.scale);
+
+            const position = child.geometry.attributes.position.array;
+            const points = [];
+            for (let i = 0; i < position.length; i += 3) {
+                // Apply the relative scale
+                points.push(new THREE.Vector3(
+                    position[i] * relativeScale.x,
+                    position[i + 1] * relativeScale.y,
+                    position[i + 2] * relativeScale.z
+                ));
+            }
+
+            const convexGeometry = new ConvexGeometry(points);
+            const shape = CreateTrimesh(convexGeometry);
+            const body = new CANNON.Body({ mass: 1 });
+            body.allowSleep = true;
+            body.addShape(shape);
+
+            body.position.copy(c);
+            body.quaternion.copy(nodeQuaternion);
+
+            world.addBody(body);
+
+            // Añadir al array de objetos físicos para sincronización
+            addPhysicsObject(child, body);
+        }
+    });
+}, undefined, function (error) {
+    console.error('An error happened:', error);
+});
+
+
 // Controles de primera persona
 const controls = new PointerLockControls(camera, document.body);
 scene.add(controls.getObject());
@@ -246,77 +290,66 @@ document.addEventListener('keyup', (event) => {
 
 function animate() {
     requestAnimationFrame(animate);
-    const delta = Math.min(clock.getDelta(), 0.1)
+    const delta = Math.min(clock.getDelta(), 0.1);
 
     if (controls.isLocked === true) {
         const direction = new THREE.Vector3();
         const velocity = new THREE.Vector3();
 
-        // Obtener la dirección en la que la cámara está mirando
         const forward = new THREE.Vector3();
         camera.getWorldDirection(forward);
-        forward.y = 0; // Ignorar el componente Y para que el jugador no se mueva hacia arriba o abajo
+        forward.y = 0;
         forward.normalize();
 
         const right = new THREE.Vector3();
-        right.crossVectors(camera.up, forward).normalize(); // Vector a la derecha de la cámara
+        right.crossVectors(camera.up, forward).normalize();
 
-        // Calcular la dirección del movimiento basado en las teclas presionadas
         direction.z = Number(keysPressed.forward) - Number(keysPressed.backward);
         direction.x = Number(keysPressed.right) - Number(keysPressed.left);
 
-        // Combinar la dirección del movimiento con la dirección en la que mira la cámara
         velocity.add(forward.clone().multiplyScalar(direction.z));
         velocity.add(right.clone().multiplyScalar(direction.x));
-        velocity.normalize().multiplyScalar(moveSpeed); // Ajustar velocidad
+        velocity.normalize().multiplyScalar(moveSpeed);
 
-        // Obtener la normal de la superficie bajo el jugador
         const contactNormal = new CANNON.Vec3();
         let numContacts = 0;
 
-        // Verificar contactos actuales del cuerpo del jugador
         world.contacts.forEach((contact) => {
             if (contact.bi === playerBody || contact.bj === playerBody) {
-                // Obtener la normal dependiendo del cuerpo
                 if (contact.bi === playerBody) {
                     contact.ni.negate(contactNormal);
                 } else {
                     contactNormal.copy(contact.ni);
                 }
-
-                // Incrementar el contador de contactos si estamos en contacto con el suelo
                 numContacts++;
             }
         });
 
         if (numContacts > 0) {
-            // Calcula el ángulo entre la normal del suelo y el vector "arriba" (0, 1, 0)
             const angle = Math.acos(contactNormal.dot(new CANNON.Vec3(0, 1, 0)));
-
-            const maxSlopeAngle = Math.PI / 4; // Por ejemplo, 45 grados
+            const maxSlopeAngle = Math.PI / 4;
             if (angle < maxSlopeAngle) {
-                // Solo mover al jugador si la inclinación está por debajo del ángulo máximo permitido
                 playerBody.velocity.x = velocity.x;
                 playerBody.velocity.z = velocity.z;
             } else {
-                // Si la inclinación es demasiado grande, evitar movimiento
                 playerBody.velocity.x = 0;
                 playerBody.velocity.z = 0;
             }
         }
 
-        // Actualizar el mundo de Cannon.js
         world.step(delta);
-
         playerMesh.position.copy(playerBody.position);
-
-        // Sincronizar la posición del jugador de Three.js con la de Cannon.js
         controls.getObject().position.copy(playerBody.position);
         camera.position.y = playerBody.position.y + playerHeight;
+
+        // Sincronizar todas las mallas con sus cuerpos de Cannon.js
+        physicsObjects.forEach(({ mesh, body }) => {
+            mesh.position.copy(body.position);
+            mesh.quaternion.copy(body.quaternion);
+        });
     }
 
     renderer.render(scene, camera);
 }
-
 
 animate();
