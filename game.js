@@ -1,15 +1,22 @@
 import * as THREE from 'https://cdn.skypack.dev/three@0.134.0';
 import { PointerLockControls } from 'https://cdn.skypack.dev/three@0.134.0/examples/jsm/controls/PointerLockControls.js';
+import { RGBELoader } from 'https://cdn.skypack.dev/three@0.134.0/examples/jsm/loaders/RGBELoader.js';
 import { FBXLoader } from 'https://cdn.skypack.dev/three@0.134.0/examples/jsm/loaders/FBXLoader.js';
 import * as CANNON from 'https://cdn.skypack.dev/cannon-es@0.20.0';
 import { ConvexGeometry } from 'https://cdn.skypack.dev/three@0.134.0/examples/jsm/geometries/ConvexGeometry.js';
-
+import { BufferGeometryUtils } from "//cdn.skypack.dev/three@0.129.0/examples/jsm/utils/BufferGeometryUtils?min";
 
 let mapMeshes = [];
 const playerHeight = 15;
 const playerRadius = 5;
+let outlineMesh = null;
+let grabConstraint = null;
+let ghostBody = null; // Cuerpo invisible que sigue la cámara
 let convexHull = new THREE.Mesh();
 let mesh;
+const SPHERE_COLLISION_GROUP = 0x0001;
+const MAP_COLLISION_GROUP = 0x0002;
+const animateCallbacks = [];
 // Configurar el mundo de Cannon.js
 const world = new CANNON.World();
 world.gravity.set(0, -9.82, 0);  // Gravedad hacia abajo
@@ -25,6 +32,7 @@ const playerBody = new CANNON.Body({
         restitution: 0.0
     })
 });
+playerBody.collisionFilterGroup = MAP_COLLISION_GROUP;
 world.addBody(playerBody);
 
 
@@ -74,8 +82,23 @@ renderer.shadowMap.enabled = true;
 document.body.appendChild(renderer.domElement);
 
 // Añadir luces
-const ambientLight = new THREE.AmbientLight(0xffffff, 1);
+const ambientLight = new THREE.AmbientLight(0xffffff,1);
 scene.add(ambientLight);
+const directionalLight = new THREE.DirectionalLight(0xffffff, 1); // Intensity set to 0.5 to reduce harshness
+directionalLight.position.set(0, 10, 0); // Position the light above the scene
+directionalLight.target.position.set(0, 0, 0); // Point the light towards the center of the scene
+scene.add(directionalLight);
+scene.add(directionalLight.target);
+
+const loader2 = new RGBELoader();
+loader2.load('maphdr.hdr', function(texture) {
+    texture.mapping = THREE.EquirectangularReflectionMapping;
+    scene.environment = texture;
+    scene.background = texture;
+});
+
+
+
 
 
 // Crear un punto en el centro de la pantalla usando Three.js
@@ -90,7 +113,7 @@ scene.add(camera);  // Asegúrate de agregar la cámara a la escena
 
 // Cargar el modelo FBX
 const loader = new FBXLoader();
-let url = '3d/mapa11.fbx';
+let url = '3d/mapa17.fbx';
 // Función para convertir geometría de Three.js a Trimesh de Cannon.js
 let physicsObjects = [];  // Array para almacenar la relación entre cuerpos y mallas
 
@@ -114,14 +137,19 @@ function CreateTrimesh(geometry) {
 
 loader.load(url, (object) => {
     object.position.set(-15, -20, -20);
-    object.scale.set(0.5, 0.5, 0.5);
+    object.scale.set(0.55, 0.55, 0.55);
 
     scene.add(object);
-    console.log("object pos:", object.position);
     object.updateMatrixWorld(true);
 
     object.traverse(function (child) {
         if (child instanceof THREE.Mesh) {
+
+            child.material = new THREE.MeshBasicMaterial({ 
+                color: child.material.color,
+                map: child.material.map // Mantiene la textura original, si la hay
+            });
+
             child.updateMatrixWorld();
             child.geometry.attributes.position.needsUpdate = true;
             const box = new THREE.Box3().setFromObject(child);
@@ -137,7 +165,7 @@ loader.load(url, (object) => {
             relativeScale.copy(object.scale);  // Parent scale
             relativeScale.multiply(child.scale); // Relative to child scale
 
-            console.log("child scale:", child.scale);
+
 
             const position = child.geometry.attributes.position.array;
             const points = [];
@@ -159,14 +187,10 @@ loader.load(url, (object) => {
             body.quaternion.copy(nodeQuaternion);
             body.restitution = 0.0;
             body.friction = 1;
+            body.collisionFilterGroup = MAP_COLLISION_GROUP;
             
             world.addBody(body);
 
-            // Create a mesh for the convex geometry to visualize
-            const mesh = new THREE.Mesh(convexGeometry, new THREE.MeshBasicMaterial({ color: 0x00ff00, wireframe: true }));
-            mesh.position.copy(c);
-            mesh.quaternion.copy(nodeQuaternion);
-            scene.add(mesh);
 
         }
     });
@@ -174,17 +198,82 @@ loader.load(url, (object) => {
     console.error('An error happened:', error);
 });
 
-const spheres = [];  // Array para almacenar las esferas visibles
+let spheres = [];  // Array para almacenar las esferas visibles
+let nameTags = [];  // Array para almacenar los nametags
 
-loader.load('piezas/pieza3.fbx', (object) => {
-    object.position.set(25, 10, 0);
-    object.scale.set(0.03, 0.03, 0.03);
+function generateRandomName() {
+    const prefixes = [
+        "yC", "iC", "C", "pIK", "tR", "xL", "oP", "mN", "vT", "qR", 
+        "aG", "bL", "kM", "wJ", "nD", "hX", "sB", "jK", "lP", "eZ",
+        "uN", "rF", "gQ", "dS", "cV", "zY", "fH", "pX", "vJ", "mR",
+        "tQ", "bN", "nL", "qT", "rK", "sP", "wV", "kZ", "xM", "dW"
+    ];
+
+    const suffixes = [
+        "001", "002", "003", "004", "005", "006", "007", "008", "009", "010",
+        "011", "012", "013", "014", "015", "016", "017", "018", "019", "020",
+        "021", "022", "023", "024", "025", "026", "027", "028", "029", "030",
+        "031", "032", "033", "034", "035", "036", "037", "038", "039", "040",
+        "041", "042", "043", "044", "045", "046", "047", "048", "049", "050",
+        "051", "052", "053", "054", "055", "056", "057", "058", "059", "060",
+        "061", "062", "063", "064", "065", "066", "067", "068", "069", "070",
+        "071", "072", "073", "074", "075", "076", "077", "078", "079", "080",
+        "081", "082", "083", "084", "085", "086", "087", "088", "089", "090",
+        "091", "092", "093", "094", "095", "096", "097", "098", "099", "100",
+        "101", "102", "103", "104", "105", "106", "107", "108", "109", "110",
+        "111", "112", "113", "114", "115", "116", "117", "118", "119", "120",
+        "121", "122", "123", "124", "125", "126", "127", "128", "129", "130",
+        "131", "132", "133", "134", "135", "136", "137", "138", "139", "140",
+        "141", "142", "143", "144", "145", "146", "147", "148", "149", "150",
+        "151", "152", "153", "154", "155", "156", "157", "158", "159", "160"
+    ];
+
+    const prefix = prefixes[Math.floor(Math.random() * prefixes.length)];
+    const suffix = suffixes[Math.floor(Math.random() * suffixes.length)];
+    
+    return `${prefix}.${suffix}`;
+}
+
+
+function createNameTag(mesh) {
+    const name = generateRandomName();
+    
+    const canvas = document.createElement('canvas');
+    const context = canvas.getContext('2d');
+    context.font = 'Bold 30px Arial';
+    context.fillStyle = 'rgba(255,255,255,1)';
+    context.fillText(name, 0, 30);
+
+    const texture = new THREE.CanvasTexture(canvas);
+    const spriteMaterial = new THREE.SpriteMaterial({ map: texture, depthTest: false });
+    const sprite = new THREE.Sprite(spriteMaterial);
+    
+    sprite.scale.set(10, 5, 1);  // Adjust the size as needed
+    sprite.position.set(0, 10, 0);  // Initial position above the mesh
+    scene.add(sprite);
+    
+    // Ensure the nametag is visible through walls
+    sprite.renderOrder = 999;
+    sprite.onBeforeRender = function(renderer) { renderer.clearDepth(); };
+    
+    return sprite;
+}
+
+function updateNameTagPosition(nameTag, mesh) {
+    const pos = new THREE.Vector3();
+    mesh.getWorldPosition(pos);
+    nameTag.position.set(pos.x, pos.y + 2, pos.z);  // Adjust height above the mesh as needed
+}
+
+loader.load('piezas/piezas19.fbx', (object) => {
+    object.position.set(-15, -20, -20);
+    object.scale.set(0.55, 0.55, 0.55);
     object.updateMatrixWorld(true);
 
     object.traverse(function (child) {
         if (child instanceof THREE.Mesh) {
             child.updateMatrixWorld(true);
-
+            const nameTag = createNameTag(child);
             const globalPosition = new THREE.Vector3();
             const globalQuaternion = new THREE.Quaternion();
             const globalScale = new THREE.Vector3();
@@ -193,7 +282,7 @@ loader.load('piezas/pieza3.fbx', (object) => {
             child.getWorldQuaternion(globalQuaternion);
             child.getWorldScale(globalScale);
 
-            // Calcular la Bounding Sphere
+            // Calcular la Bounding Sphere 
             const boundingSphere = new THREE.Sphere();
             child.geometry.computeBoundingSphere();
             boundingSphere.copy(child.geometry.boundingSphere);
@@ -219,30 +308,24 @@ loader.load('piezas/pieza3.fbx', (object) => {
             body.position.copy(globalPosition);
             body.quaternion.copy(globalQuaternion);
             body.fixedRotation = true;  
-            //body.angularDamping = 1.0;
+            body.angularDamping = 1.0;
+            body.collisionFilterGroup = SPHERE_COLLISION_GROUP;
+            body.collisionFilterMask = MAP_COLLISION_GROUP;
 
             world.addBody(body);
-
-            // Crear una malla para la esfera en Three.js
-            const sphereGeometry = new THREE.SphereGeometry(radius, 32, 32);
-            const sphereMaterial = new THREE.MeshBasicMaterial({ color: 0x00ff00, wireframe: true });
-            const sphereMesh = new THREE.Mesh(sphereGeometry, sphereMaterial);
-
-            // Posicionar la esfera en la escena
-            sphereMesh.position.copy(globalPosition);
-            scene.add(sphereMesh);
-
-            // Añadir la esfera al array de esferas visibles para actualizar más tarde
-            spheres.push({ mesh: sphereMesh, offset: new THREE.Vector3(), body });
 
             // Añadir la malla del objeto a la escena
             mesh = child;
             mesh.position.copy(globalPosition);
             mesh.quaternion.copy(globalQuaternion);
             mesh.scale.copy(globalScale);
+            mesh.material.metalness = 1.0;
+            mesh.material.roughness = 0;
+            mesh.material.needsUpdate = true;
             scene.add(mesh);
 
             addPhysicsObject(mesh, body);
+            nameTags.push({ sprite: nameTag, mesh: child });
         }
     });
 }, undefined, function (error) {
@@ -265,7 +348,7 @@ instructions.style.fontSize = '24px';
 instructions.style.color = 'white';
 instructions.style.fontFamily = 'Arial';
 instructions.style.cursor = 'pointer';
-instructions.innerHTML = 'Haz clic para jugar';
+instructions.innerHTML = ' . ';
 document.body.appendChild(instructions);
 
 instructions.addEventListener('click', function () {
@@ -369,27 +452,64 @@ document.addEventListener('mousedown', (event) => {
         isDragging = false;
         grabbedObject.body.collisionFilterGroup = 1;
         grabbedObject.body.collisionFilterMask = -1; 
+        grabbedObject.body.collisionFilterGroup = SPHERE_COLLISION_GROUP;
+        grabbedObject.body.collisionFilterMask = MAP_COLLISION_GROUP;
         grabbedObject = null;
     }
 });
 
+function isAlreadyAttached(obj1, obj2) {
+    // Revisar si ya existe un constraint entre obj1 y obj2
+    return existingConstraints.some(constraint => {
+        return (
+            (constraint.bodyA === obj1.body && constraint.bodyB === obj2.body) ||
+            (constraint.bodyA === obj2.body && constraint.bodyB === obj1.body)
+        );
+    });
+}
+const existingConstraints = [];
 
-function limitVelocity(body, maxLinearVelocity, maxAngularVelocity) {
-    // Limitar la velocidad lineal
-    const linearVelocity = body.velocity;
-    if (linearVelocity.length() > maxLinearVelocity) {
-        linearVelocity.scale(maxLinearVelocity / linearVelocity.length(), linearVelocity);
-    }
-
-    // Limitar la velocidad angular
-    const angularVelocity = body.angularVelocity;
-    if (angularVelocity.length() > maxAngularVelocity) {
-        angularVelocity.scale(maxAngularVelocity / angularVelocity.length(), angularVelocity);
+function checkForCollisions() {
+    for (let i = 0; i < physicsObjects.length; i++) {
+        const obj1 = physicsObjects[i];
+        
+        for (let j = i + 1; j < physicsObjects.length; j++) {
+            const obj2 = physicsObjects[j];
+            
+            // Verificar si ya existe un constraint entre obj1 y obj2
+            if (isAlreadyAttached(obj1, obj2)) {
+                continue; // Saltar si ya están unidos por un constraint
+            }
+            
+            const distance = obj1.body.position.distanceTo(obj2.body.position);
+            const combinedRadius = obj1.body.shapes[0].boundingSphereRadius + obj2.body.shapes[0].boundingSphereRadius;
+            const collisionThreshold = combinedRadius * 0.7;
+            
+            // Si los objetos están suficientemente cerca, unirlos
+            if (distance < collisionThreshold) {
+                attachObject(obj1, obj2);
+            }
+        }
     }
 }
 
+
+
+
+
 let highlightedObject = null;
 let originalMaterial = null;
+
+function attachObject(object1, object2) {
+    const maxForce = 1e7;
+    const lockConstraint = new CANNON.LockConstraint(object1.body, object2.body, { maxForce });
+    world.addConstraint(lockConstraint);
+
+    // object2.body.collisionResponse = false;
+        // Guardar el constraint para no crear duplicados
+    existingConstraints.push(lockConstraint);
+
+}
 
 function animate() {
     
@@ -399,71 +519,105 @@ function animate() {
     const maxSubSteps = 3;
     if (controls.isLocked === true) {
         world.step(fixedTimeStep, delta, maxSubSteps);
+        
         const direction = new THREE.Vector3();
         const velocity = new THREE.Vector3();
 
-        const maxLinearVelocity = 20;  // Velocidad lineal máxima permitida
-        const maxAngularVelocity = 5;  // Velocidad angular máxima permitida
-        world.bodies.forEach(body => {
-            limitVelocity(body, maxLinearVelocity, maxAngularVelocity);
-        });
-
+        if (!grabbedObject){
+            checkForCollisions();
+            if (ghostBody) {
+                world.removeConstraint(grabConstraint);
+                world.removeBody(ghostBody);
+                grabConstraint = null;
+                ghostBody = null;
+            }
+        }
         // Actualizar el raycaster con la dirección de la cámara
         raycaster.setFromCamera(pointer, camera);
         const intersectableMeshes = physicsObjects.map(obj => obj.mesh);
 
         // Detectar intersección con objetos interactuables (excluyendo el mapa)
         const intersects = raycaster.intersectObjects(intersectableMeshes, true);
-        if (intersects.length > 0) {
-            console.log("Intersección detectada con:", intersects[0].object.name);
-        }
-        
+
         // Deshacer el highlight del objeto anterior si ya no está en el centro
-        if (highlightedObject && intersects.length > 0 && highlightedObject !== intersects[0].object) {
-            highlightedObject.material = originalMaterial; // Restaurar el material original
+        if (highlightedObject && (!intersects.length || highlightedObject !== intersects[0].object)) {
+            scene.remove(outlineMesh); // Elimina el borde si existía
+            outlineMesh = null;
+            highlightedObject.material = originalMaterial; // Restaura el material original
             highlightedObject = null;
         }
 
         if (intersects.length > 0) {
             const intersected = intersects[0].object;
-
-            // Resaltar el objeto solo si es una "pieza"
+        
             if (!highlightedObject || highlightedObject !== intersected) {
                 if (highlightedObject) {
-                    highlightedObject.material = originalMaterial; // Restaurar el material original
+                    scene.remove(outlineMesh); // Elimina el borde si existía
+                    outlineMesh = null;
+                    highlightedObject.material = originalMaterial; // Restaura el material original
                 }
+        
                 highlightedObject = intersected;
-                originalMaterial = intersected.material; // Guardar el material original
-                intersected.material = new THREE.MeshBasicMaterial({ color: 0xffff00 }); // Resaltar
+                originalMaterial = intersected.material; // Guarda el material original
+        
+                // Crear el borde
+                const outlineMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.BackSide });
+                outlineMesh = new THREE.Mesh(intersected.geometry, outlineMaterial);
+                outlineMesh.scale.copy(intersected.scale).multiplyScalar(1.05); // Ajusta el tamaño del borde según el objeto original
+        
+                scene.add(outlineMesh);
             }
-        } else if (highlightedObject) {
-            highlightedObject.material = originalMaterial;
-            highlightedObject = null;
+            if (outlineMesh) {
+                outlineMesh.position.copy(intersected.position);
+                outlineMesh.rotation.copy(intersected.rotation);
+                outlineMesh.quaternion.copy(intersected.quaternion);
+            }
         }
         
         if (grabbedObject) {
             
             grabbedObject.body.wakeUp();
-            console.log("Objeto agarrado:", grabbedObject.mesh.name);
+
+            // Crear un cuerpo invisible si no existe
+            if (!ghostBody) {
+                ghostBody = new CANNON.Body({
+                    mass: 0, // Sin masa
+                    position: new CANNON.Vec3().copy(grabbedObject.body.position),
+                    collisionFilterGroup: 0, // Sin colisiones
+                    collisionFilterMask: 0
+                });
+                world.addBody(ghostBody);
+
+                // Crear un constraint entre el objeto agarrado y el ghostBody
+                grabConstraint = new CANNON.LockConstraint(grabbedObject.body, ghostBody);
+                world.addConstraint(grabConstraint);
+            }
 
             // Obtener la dirección en la que mira la cámara
             const cameraDirection = new THREE.Vector3();
             camera.getWorldDirection(cameraDirection);
-        
-            // Calcular la nueva posición del objeto frente al jugador
-            const newPos = new THREE.Vector3().copy(camera.position).add(cameraDirection.multiplyScalar(30)); // Ajustar la distancia según lo que necesites
-            console.log("Nueva posición calculada:", newPos);
-            // Actualizar la posición del cuerpo físico de Cannon.js
-            grabbedObject.body.position.copy(newPos);
-            mesh.position.copy(newPos);
-            const physicsObject = physicsObjects.find(obj => obj.body === grabbedObject.body);
-            if (physicsObject) {
-                console.log("Objeto encontrado:", physicsObject.mesh.name);
-                physicsObject.mesh.position.copy(newPos);
-                physicsObject.mesh.quaternion.copy(grabbedObject.body.quaternion);
-            }
-            console.log("Nueva posición del cuerpo:", grabbedObject.body.position.clone());
 
+            // Calcular la nueva posición del ghostBody frente al jugador
+            const newPos = new THREE.Vector3().copy(camera.position).add(cameraDirection.multiplyScalar(30));
+            ghostBody.position.copy(newPos); // El cuerpo invisible sigue esta posición
+
+            // Actualizar la posición y orientación de las mallas
+            physicsObjects.forEach(({ mesh, body }) => {
+                mesh.position.copy(body.position);
+                mesh.quaternion.copy(body.quaternion);
+            });
+
+            // Actualizar el borde si existe un objeto resaltado
+            if (outlineMesh) {
+                const intersected = intersects[0]?.object;
+                if (intersected) {
+                    outlineMesh.position.copy(intersected.position);
+                    outlineMesh.rotation.copy(intersected.rotation);
+                    outlineMesh.quaternion.copy(intersected.quaternion);
+                }
+            }
+            grabbedObject.body.collisionFilterGroup = SPHERE_COLLISION_GROUP;
+            grabbedObject.body.collisionFilterMask = MAP_COLLISION_GROUP;
 
         }
 
@@ -508,7 +662,8 @@ function animate() {
             }
         }
 
-        
+;
+
         playerMesh.position.copy(playerBody.position);
         controls.getObject().position.copy(playerBody.position);
         camera.position.y = playerBody.position.y + playerHeight;
@@ -518,15 +673,11 @@ function animate() {
             mesh.position.copy(body.position);
             mesh.quaternion.copy(body.quaternion);
         });
-
-        spheres.forEach(({ mesh, offset, body }) => {
-            body.angularVelocity.x = 0;  
-            body.angularVelocity.z = 0;
-            const rotatedOffset = offset.clone().applyQuaternion(body.quaternion);
-            const worldPosition = new THREE.Vector3().copy(body.position).add(rotatedOffset);
-            mesh.position.set(worldPosition.x, worldPosition.y, worldPosition.z);
-            mesh.quaternion.copy(body.quaternion);
+        
+        nameTags.forEach(({ sprite, mesh }) => {
+            updateNameTagPosition(sprite, mesh);
         });
+
     }
 
     renderer.render(scene, camera);
